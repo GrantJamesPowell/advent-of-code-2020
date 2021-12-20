@@ -13,6 +13,17 @@ pub fn bits_to_bytes(bits: &[bool]) -> u64 {
     })
 }
 
+pub fn bits_as_u8s_to_bytes(bits: &[u8]) -> usize {
+    bits.iter()
+        .rev()
+        .enumerate()
+        .fold(0, |sum, (idx, bit)| match *bit {
+            0 => sum,
+            1 => sum + 2usize.pow(idx as u32),
+            _ => panic!("invalid bit"),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
