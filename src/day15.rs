@@ -1,58 +1,66 @@
 #![allow(dead_code)]
+#![feature(map_first_last)]
 
-use std::{collections::HashMap, iter::once, str::FromStr};
+// Pretty big speedup with `--release`
+//
+// ➜  advent_of_code_2021 git:(master) ✗ time ./target/release/day15
+// Day 15, pt 1 answer: 583
+// Day 15, pt 2 answer: 2934
+// ./target/release/day15  3.02s user 0.30s system 99% cpu 3.313 total
+// ➜  advent_of_code_2021 git:(master) ✗ time ./target/debug/day15
+// Day 15, pt 1 answer: 583
+// Day 15, pt 2 answer: 2934
+// ./target/debug/day15  148.27s user 0.74s system 99% cpu 2:29.12 total
+
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    iter::once,
+    str::FromStr,
+};
 
 fn main() {
-    let board = load_file("./src/inputs/day15.txt");
+    let board = load_file("./src/inputs/day15-example.txt");
 
-    // Day 1
-    let answer: usize = find_paths(&[], (0, 0), &board, &mut HashMap::new())
-        .into_iter()
-        .map(|path| path.iter().map(|&pos| board.risk_at(pos)).sum())
-        .min()
-        .expect("at least one item");
+    // Part 1
+    println!("Day 15, pt 1 answer: {:?}", find_answer(&board, 1));
 
-    println!("Day 15 Pt. 1 answer: {:?}", answer);
+    // Part 2
+    println!("Day 15, pt 2 answer: {:?}", find_answer(&board, 5));
 }
 
-fn find_paths(
-    previous_path: &[Position],
-    current: Position,
-    board: &Board,
-    memoization: &mut HashMap<Position, Vec<Vec<Position>>>,
-) -> Vec<Vec<Position>> {
-    if current == board.goal() {
-        return vec![];
+fn find_answer(board: &Board, multiplier: usize) -> usize {
+    let mut best_path: HashMap<Position, Vec<Position>> = HashMap::from_iter([((0, 0), vec![])]);
+    let mut unexplored: BTreeSet<Position> = BTreeSet::from_iter([(0, 0)]);
+    let mut explored: HashSet<Position> = HashSet::new();
+
+    while let Some(pos) = unexplored.pop_first() {
+        explored.insert(pos);
+
+        for neighbor in board.neighbors(pos, multiplier) {
+            let p: Vec<Position> = best_path[&pos].iter().cloned().chain(once(pos)).collect();
+            let p_cost = board.path_cost(p.iter().cloned());
+
+            if !explored.contains(&neighbor) {
+                unexplored.insert(neighbor);
+            }
+
+            match best_path.get(&neighbor) {
+                Some(assumed_best) => {
+                    let current_score = board.path_cost(assumed_best.iter().cloned());
+                    if current_score > p_cost {
+                        best_path.insert(neighbor, p);
+                    }
+                }
+                None => {
+                    best_path.insert(neighbor, p);
+                }
+            }
+        }
     }
 
-    if let Some(paths) = memoization.get(&current) {
-        return paths.clone();
-    }
+    let optimal = &best_path[&board.goal(multiplier)];
 
-    let mut paths = Vec::new();
-
-    board
-        .neighbors(current)
-        .filter(|neighbor| !previous_path.contains(neighbor))
-        .for_each(|neighbor| {
-            println!(" -> {:?}", neighbor);
-            let new_path = previous_path
-                .iter()
-                .chain(once(&neighbor))
-                .cloned()
-                .collect::<Vec<_>>();
-
-            let mut paths_from_neighbor = find_paths(&new_path, neighbor, board, memoization);
-            memoization.insert(neighbor, paths.clone());
-
-            paths_from_neighbor
-                .iter_mut()
-                .for_each(|path| path.insert(0, neighbor));
-
-            paths.extend(paths_from_neighbor)
-        });
-
-    paths
+    board.path_cost(optimal[1..].iter().cloned()) + board.risk_at(board.goal(multiplier))
 }
 
 type Position = (usize, usize);
@@ -60,20 +68,35 @@ type Position = (usize, usize);
 struct Board(Vec<Vec<usize>>);
 
 impl Board {
+    fn path_cost(&self, path: impl Iterator<Item = Position>) -> usize {
+        path.map(|pos| self.risk_at(pos)).sum()
+    }
+
     fn risk_at(&self, (x, y): Position) -> usize {
-        self.0[y][x]
+        let real_width = x % self.real_width();
+        let real_height = y % self.real_height();
+        let multipler = (x / self.real_width()) + (y / self.real_height());
+        let original = self.0[real_height][real_width];
+
+        let mut risk = original + multipler;
+
+        while risk > 9 {
+            risk -= 9;
+        }
+
+        risk
     }
 
-    fn goal(&self) -> Position {
-        (self.width() - 1, self.height() - 1)
+    fn goal(&self, multiplier: usize) -> Position {
+        (self.width(multiplier) - 1, self.height(multiplier) - 1)
     }
 
-    fn neighbors(&self, (x, y): Position) -> impl Iterator<Item = Position> {
+    fn neighbors(&self, (x, y): Position, multiplier: usize) -> impl Iterator<Item = Position> {
         let x = x as isize;
         let y = y as isize;
 
-        let width = self.width() as isize;
-        let height = self.height() as isize;
+        let width = self.width(multiplier) as isize;
+        let height = self.height(multiplier) as isize;
 
         [(x, y + 1), (x, y - 1), (x + 1, y), (x - 1, y)]
             .into_iter()
@@ -81,11 +104,19 @@ impl Board {
             .map(|(x, y)| (x as usize, y as usize))
     }
 
-    fn width(&self) -> usize {
+    fn width(&self, multiplier: usize) -> usize {
+        self.real_width() * multiplier
+    }
+
+    fn height(&self, multiplier: usize) -> usize {
+        self.real_height() * multiplier
+    }
+
+    fn real_width(&self) -> usize {
         self.0[0].len()
     }
 
-    fn height(&self) -> usize {
+    fn real_height(&self) -> usize {
         self.0.len()
     }
 }
@@ -103,4 +134,23 @@ fn load_file(file_name: &str) -> Board {
         .collect();
 
     Board(board)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_risk_at() {
+        let board = load_file("./src/inputs/day15-example.txt");
+        let risks = std::fs::read_to_string("./src/inputs/day15-example-risk-map.txt")
+            .expect("file exists");
+
+        for (y, line) in risks.lines().enumerate() {
+            for (x, risk) in line.split("").filter(|x| !x.is_empty()).enumerate() {
+                let risk = usize::from_str(risk).expect("valid risk");
+                assert_eq!(risk, board.risk_at((x, y)), "Position ({:?}, {:?})", x, y);
+            }
+        }
+    }
 }
